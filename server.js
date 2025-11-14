@@ -1,8 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
-import path from "path";
-import { fileURLToPath } from "url";
 
 import tmdbRoutes from "./routes/tmdbRoutes.js";
 import aiRoutes from "./routes/aiRoutes.js";
@@ -17,19 +15,14 @@ app.use(express.json());
 app.use("/api/tmdb", tmdbRoutes);
 app.use("/api/ai", aiRoutes);
 
-// // Important for serving frontend in production
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const frontendPath = path.join(__dirname, "../frontend/dist");
-app.use(express.static(frontendPath));
-
-// Catch-all → send React app
-app.get("*", (req, res) => {
-   res.sendFile(path.join(frontendPath, "index.html"));
+// Default route (for Render health check or ping)
+app.get("/*", (req, res) => {
+  res.send("CineAIra Backend is running");
 });
 
-// Start Server
+// Render requires port = 10000
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
 
+app.listen(PORT, () =>
+  console.log(`🚀 Backend running on port ${PORT}`)
+);
