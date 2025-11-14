@@ -8,46 +8,49 @@ import numpy as np
 from sentence_transformers import util
 import difflib
 import os
-
-if os.environ.get("DEBUG_MODE") == "1":
-    print("Loading embeddings...", file=sys.stderr)
+from huggingface_hub import hf_hub_download
 
 # =========================================================
-# === Configuration =======================================
+# === HuggingFace Repo Info ===============================
 # =========================================================
-DATA_PATH = "movies_light.csv"           
-EMBEDDINGS_PATH = "movie_embeddings.pkl"   
+HF_REPO = "ShanuOjha/movie-embeddings"  # ✅ CHANGE IF NEEDED
+CSV_FILE = "movies_light.csv"
+PKL_FILE = "movie_embeddings.pkl"
+
+print("Fetching files from HuggingFace Hub...")
 
 # =========================================================
-# === Load dataset and embeddings =========================
+# === Download CSV from HuggingFace ========================
 # =========================================================
-print("Loading dataset and embeddings...")
+csv_path = hf_hub_download(
+    repo_id=HF_REPO,
+    filename=CSV_FILE,
+    repo_type="dataset",
+    cache_dir="./"
+)
 
-if not os.path.exists(DATA_PATH):
-    print(f"Dataset file not found: {DATA_PATH}")
-    sys.exit(1)
+print(f"CSV loaded from: {csv_path}")
 
-if not os.path.exists(EMBEDDINGS_PATH):
-    print(f"Embeddings file not found: {EMBEDDINGS_PATH}")
-    sys.exit(1)
-
-# Load dataset
-new_data = pd.read_csv(DATA_PATH)
+new_data = pd.read_csv(csv_path)
 required_columns = {"id", "title", "tags"}
 if not required_columns.issubset(set(new_data.columns)):
-    print("movies_light.csv must contain 'id', 'title', and 'tags' columns.")
+    print("CSV must contain 'id', 'title', and 'tags' columns.")
     sys.exit(1)
 
 # =========================================================
-# === Load embeddings from .pkl ===========================
+# === Download Embeddings PKL from HuggingFace =============
 # =========================================================
-import pickle
-import torch
-import numpy as np
+pkl_path = hf_hub_download(
+    repo_id=HF_REPO,
+    filename=PKL_FILE,
+    repo_type="dataset",
+    cache_dir="./"
+)
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Embeddings file loaded from: {pkl_path}")
 
-with open(EMBEDDINGS_PATH, "rb") as f:
+# Load embeddings
+with open(pkl_path, "rb") as f:
     loaded = pickle.load(f)
 
 if isinstance(loaded, dict):
@@ -56,14 +59,21 @@ else:
     embeddings = loaded
 
 if embeddings is None:
-    raise ValueError("embeddings.pkl is missing valid embedding data")
+    raise ValueError("Embeddings file missing valid data")
 
-embeddings_tensor = torch.tensor(np.array(embeddings), dtype=torch.float32, device=device)
-print("Embeddings loaded successfully:", embeddings_tensor.shape)
-print(f"Device in use: {device}, Movies loaded: {len(new_data)}")
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+embeddings_tensor = torch.tensor(
+    np.array(embeddings),
+    dtype=torch.float32,
+    device=device
+)
+
+print("Embeddings loaded:", embeddings_tensor.shape)
+print("Device:", device)
 
 # =========================================================
-# === Recommendation function =============================
+# === Recommendation Function =============================
 # =========================================================
 def recommend(movie_title, top_n=5):
     if not movie_title or not isinstance(movie_title, str):
@@ -72,7 +82,6 @@ def recommend(movie_title, top_n=5):
     titles = new_data["title"].dropna().tolist()
     lower_titles = [t.lower() for t in titles]
 
-    # Fuzzy match
     matches = difflib.get_close_matches(movie_title.lower(), lower_titles, n=1, cutoff=0.5)
     if not matches:
         return {"error": f"'{movie_title}' not found in dataset."}
@@ -85,11 +94,9 @@ def recommend(movie_title, top_n=5):
     idx = int(idx_list[0])
     target_emb = embeddings_tensor[idx].unsqueeze(0)
 
-    # Compute cosine similarity
     cosine_scores = util.cos_sim(target_emb, embeddings_tensor)[0]
     similar_indices = torch.argsort(cosine_scores, descending=True)[1:top_n + 1]
 
-    # Build results
     results = []
     for i in similar_indices:
         i = int(i)
@@ -101,24 +108,22 @@ def recommend(movie_title, top_n=5):
 
     return {"recommendations": results}
 
-
 # =========================================================
-# === CLI + Node Integration ==============================
+# === CLI / Node Integration ==============================
 # =========================================================
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         movie_name = " ".join(sys.argv[1:]).strip()
         try:
             result = recommend(movie_name)
-            # Output only JSON for Node.js to parse safely
             print(json.dumps(result))
         except Exception as e:
             print(json.dumps({"error": str(e)}))
         sys.exit(0)
     else:
-        print("Recommender ready. Use CLI mode or Node API.")
+        print("Recommender ready (HuggingFace mode).")
         while True:
-            user_input = input("\nEnter a movie name (or 'exit' to quit): ").strip()
+            user_input = input("\nEnter a movie name (or 'exit'): ").strip()
             if user_input.lower() in {"exit", "quit"}:
                 break
             start = time.time()
