@@ -18,17 +18,18 @@ app.use("/api/tmdb", tmdbRoutes);
 app.use("/api/ai", aiRoutes);
 
 // // Important for serving frontend in production
-// const __filename = fileURLToPath(import.meta.url);
-// const __dirname = path.dirname(__filename);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// const frontendPath = path.join(__dirname, "../frontend/dist");
-// app.use(express.static(frontendPath));
+const frontendPath = path.join(__dirname, "../frontend/dist");
+app.use(express.static(frontendPath));
 
 // Catch-all → send React app
-// app.get("*", (req, res) => {
-//   res.sendFile(path.join(frontendPath, "index.html"));
-// });
+app.get("*", (req, res) => {
+   res.sendFile(path.join(frontendPath, "index.html"));
+});
 
 // Start Server
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+
