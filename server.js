@@ -15,15 +15,11 @@ app.use(express.json());
 app.use("/api/tmdb", tmdbRoutes);
 app.use("/api/ai", aiRoutes);
 
-// Default route (for Render health check or ping)
-app.get("/*", (req, res) => {
-  res.send("CineAIra Backend is running");
-});
-
 // Render requires port = 10000
 const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () =>
   console.log(`🚀 Backend running on port ${PORT}`)
 );
+
 
