@@ -1,137 +1,104 @@
 import sys
 import json
-import time
-import pickle
-import torch
 import pandas as pd
-import numpy as np
-from sentence_transformers import util
-import difflib
-import os
-from huggingface_hub import hf_hub_download
+import re
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from fuzzywuzzy import process
 
 # =========================================================
-# === HuggingFace Repo Info ===============================
+# === Text Cleaning =======================================
 # =========================================================
-HF_REPO = "ShanuOjha/movie-embeddings"  # ✅ CHANGE IF NEEDED
-CSV_FILE = "movies_light.csv"
-PKL_FILE = "movie_embeddings.pkl"
-
-print("Fetching files from HuggingFace Hub...")
-
-# =========================================================
-# === Download CSV from HuggingFace ========================
-# =========================================================
-csv_path = hf_hub_download(
-    repo_id=HF_REPO,
-    filename=CSV_FILE,
-    repo_type="dataset",
-    cache_dir="./"
-)
-
-print(f"CSV loaded from: {csv_path}")
-
-new_data = pd.read_csv(csv_path)
-required_columns = {"id", "title", "tags"}
-if not required_columns.issubset(set(new_data.columns)):
-    print("CSV must contain 'id', 'title', and 'tags' columns.")
-    sys.exit(1)
+def clean_text(text):
+    text = str(text).lower()
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 # =========================================================
-# === Download Embeddings PKL from HuggingFace =============
+# === Load Dataset ========================================
 # =========================================================
-pkl_path = hf_hub_download(
-    repo_id=HF_REPO,
-    filename=PKL_FILE,
-    repo_type="dataset",
-    cache_dir="./"
-)
+def load_data():
+    data = pd.read_csv("movies.csv")
 
-print(f"Embeddings file loaded from: {pkl_path}")
+    selected_cols = ['genres', 'keywords', 'cast', 'director', 'tagline']
+    for col in selected_cols:
+        data[col] = data[col].fillna("").apply(clean_text)
 
-# Load embeddings
-with open(pkl_path, "rb") as f:
-    loaded = pickle.load(f)
+    data['combined_data'] = (
+        data['genres'] + " " +
+        (data['keywords'] + " ") * 2 +
+        (data['cast'] + " ") * 2 +
+        (data['director'] + " ") * 3 +
+        data['tagline']
+    )
 
-if isinstance(loaded, dict):
-    embeddings = loaded.get("embeddings", None)
-else:
-    embeddings = loaded
-
-if embeddings is None:
-    raise ValueError("Embeddings file missing valid data")
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
-embeddings_tensor = torch.tensor(
-    np.array(embeddings),
-    dtype=torch.float32,
-    device=device
-)
-
-print("Embeddings loaded:", embeddings_tensor.shape)
-print("Device:", device)
+    data = data.drop_duplicates(subset="title")
+    return data
 
 # =========================================================
-# === Recommendation Function =============================
+# === Compute TF-IDF Embeddings ===========================
 # =========================================================
-def recommend(movie_title, top_n=5):
+def compute_similarity(data):
+    vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
+    vectors = vectorizer.fit_transform(data["combined_data"])
+    return cosine_similarity(vectors)
+
+# =========================================================
+# === Recommendation Function (MATCHES recommendation.py) ==
+# =========================================================
+def recommend(movie_title, data, similarity_matrix, top_n=5):
     if not movie_title or not isinstance(movie_title, str):
         return {"error": "Invalid movie title."}
 
-    titles = new_data["title"].dropna().tolist()
-    lower_titles = [t.lower() for t in titles]
+    titles = data["title"].str.lower().tolist()
+    movie_title = movie_title.lower()
 
-    matches = difflib.get_close_matches(movie_title.lower(), lower_titles, n=1, cutoff=0.5)
-    if not matches:
+    best_match, score = process.extractOne(movie_title, titles)
+
+    if score < 60:
         return {"error": f"'{movie_title}' not found in dataset."}
 
-    best_match = matches[0]
-    idx_list = new_data[new_data["title"].str.lower() == best_match].index
-    if len(idx_list) == 0:
-        return {"error": f"'{movie_title}' not found in dataset."}
-
-    idx = int(idx_list[0])
-    target_emb = embeddings_tensor[idx].unsqueeze(0)
-
-    cosine_scores = util.cos_sim(target_emb, embeddings_tensor)[0]
-    similar_indices = torch.argsort(cosine_scores, descending=True)[1:top_n + 1]
+    idx = titles.index(best_match)
+    similarity_scores = list(enumerate(similarity_matrix[idx]))
+    sorted_scores = sorted(similarity_scores, key=lambda x: x[1], reverse=True)[1:top_n + 1]
 
     results = []
-    for i in similar_indices:
-        i = int(i)
+    for i, score_val in sorted_scores:
         results.append({
-            "id": int(new_data.iloc[i]["id"]),
-            "title": new_data.iloc[i]["title"],
-            "similarity": round(float(cosine_scores[i]), 4)
+            "id": int(data.iloc[i]["id"]),
+            "title": data.iloc[i]["title"],
+            "similarity": round(float(score_val), 4)
         })
 
     return {"recommendations": results}
 
 # =========================================================
-# === CLI / Node Integration ==============================
+# === CLI / Node.js Integration (Same as recommendation.py)
 # =========================================================
 if __name__ == "__main__":
+    try:
+        data = load_data()
+        similarity_matrix = compute_similarity(data)
+    except Exception as e:
+        print(json.dumps({"error": "Failed to load data: " + str(e)}))
+        sys.exit(1)
+
+    # Node CLI mode
     if len(sys.argv) > 1:
         movie_name = " ".join(sys.argv[1:]).strip()
         try:
-            result = recommend(movie_name)
+            result = recommend(movie_name, data, similarity_matrix)
             print(json.dumps(result))
         except Exception as e:
             print(json.dumps({"error": str(e)}))
         sys.exit(0)
-    else:
-        print("Recommender ready (HuggingFace mode).")
-        while True:
-            user_input = input("\nEnter a movie name (or 'exit'): ").strip()
-            if user_input.lower() in {"exit", "quit"}:
-                break
-            start = time.time()
-            result = recommend(user_input)
-            end = time.time()
-            if "error" in result:
-                print(result["error"])
-            else:
-                print(f"Done in {end - start:.2f}s\nRecommendations:")
-                for r in result["recommendations"]:
-                    print(f"- {r['title']} ({r['similarity']})")
+
+    # Terminal mode
+    print("Recommender ready.")
+    while True:
+        user_input = input("\nEnter a movie name (or 'exit'): ").strip()
+        if user_input.lower() in {"exit", "quit"}:
+            break
+        result = recommend(user_input, data, similarity_matrix)
+        print(result)
