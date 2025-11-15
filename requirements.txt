@@ -1,5 +1,5 @@
-torch
 pandas
 numpy
-sentence-transformers
-huggingface_hub
+scikit-learn
+fuzzywuzzy
+python-Levenshtein
